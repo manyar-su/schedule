@@ -1,0 +1,93 @@
+{
+  "theme": "dark",
+  "archetype": "Archetype 4: Swiss & High-Contrast (Dark)",
+  "rationale": "For a digital service and tech consulting agency, a high-contrast dark theme conveys cutting-edge capability and elite professionalism. The Electric Lime accent specifically signals 'live', 'real-time', and 'available' which fits the calendar scheduling core functionality.",
+  "colors": {
+    "background": "#0A0A0A",
+    "surface": "#121212",
+    "surface_glass": "rgba(18, 18, 18, 0.6)",
+    "primary_accent": "#D1FF4D",
+    "primary_accent_hover": "#E2FF7A",
+    "secondary_accent": "#00E5FF",
+    "text_primary": "#FFFFFF",
+    "text_secondary": "#A1A1AA",
+    "border": "rgba(255, 255, 255, 0.1)",
+    "success": "#D1FF4D",
+    "error": "#FF3366",
+    "warning": "#FFB800"
+  },
+  "typography": {
+    "heading_font": "Clash Display",
+    "body_font": "Satoshi",
+    "mono_font": "JetBrains Mono",
+    "hierarchies": {
+      "h1": "text-5xl md:text-6xl+ font-black tracking-tighter leading-none text-white",
+      "h2": "text-3xl md:text-4xl font-bold tracking-tight leading-tight text-white",
+      "h3": "text-xl md:text-2xl font-semibold tracking-tight text-white",
+      "body": "text-base md:text-lg leading-relaxed text-[#A1A1AA]",
+      "mono_labels": "text-xs font-mono uppercase tracking-[0.2em] text-[#A1A1AA]"
+    }
+  },
+  "spacing_and_layout": {
+    "general_padding": "p-6 md:p-12 lg:p-20",
+    "container_radius": "rounded-2xl",
+    "bento_grid": "grid grid-cols-1 md:grid-cols-12 gap-6 md:gap-8",
+    "surface_style": "bg-[#121212] border border-white/10 backdrop-blur-xl shadow-[0_8px_32px_rgba(0,0,0,0.5)]"
+  },
+  "animations_and_3d": {
+    "3d_strategy": "Use react-three-fiber and @react-three/drei to render immersive floating 3D glass and neon geometric shapes (e.g., toruses, spheres) in the Hero section. Apply MeshPhysicalMaterial (transmission, low roughness) to mimic high-end tech hardware.",
+    "hover_states": "Interactive cards must tilt slightly on mouse movement utilizing framer-motion (perspective, rotateX, rotateY) to simulate a physical 3D interface.",
+    "realtime_indicators": "Available calendar slots and live statuses must feature a subtle pulsing glow animation using the primary_accent color.",
+    "page_load": "Implement staggered fade-up (y: 20, opacity: 0 to 1) using framer-motion for all text blocks, followed by the 3D elements dynamically scaling into view."
+  },
+  "components": {
+    "hero": {
+      "layout": "Split design: Left side content (H1 + CTA), Right/Background features an immersive R3F 3D canvas.",
+      "visuals": "Dark gradient overlay over background image, integrated with React Three Fiber 3D models."
+    },
+    "service_cards": {
+      "layout": "Bento Grid (Tetris Mode A). Use tall cards for mobile app services and wide cards for web dev. Apply Glassmorphism surface styles.",
+      "interactions": "Hover states must trigger an inner 'Tracing Beam' border effect or a neon glow drop-shadow."
+    },
+    "calendar_booking": {
+      "layout": "Two-column interactive bento layout. Left: Heavily customized Shadcn Calendar (dark mode, rounded-2xl). Right: Time slots displayed as interactive mono-font chips.",
+      "states": "Selected date -> Bright lime highlight. Unavailable -> opacity-30 and struck through. Available slot -> border-[#D1FF4D] hover:bg-[#D1FF4D] hover:text-[#0A0A0A]."
+    },
+    "booking_form": {
+      "inputs": "Shadcn input/textarea. Focus state MUST be: ring-2 ring-[#D1FF4D] bg-[#1A1A1A] border-transparent. No default blue focus rings.",
+      "submit_button": "Solid #D1FF4D background, black text (#0A0A0A), font-bold, hover:scale-[1.02] active:scale-95 transition-transform. Must include data-testid='booking-submit-button'."
+    },
+    "admin_dashboard": {
+      "layout": "Control Room Grid. Dense spacing (gap-4) for data correlation. Sidebar navigation.",
+      "cards": "Flat solid background (#111), crisp 1px border, no heavy drop-shadows. Use JetBrains Mono for all analytics and metric digits."
+    }
+  },
+  "media": {
+    "image_urls": [
+      {
+        "url": "https://images.pexels.com/photos/18337608/pexels-photo-18337608.jpeg",
+        "category": "hero_background",
+        "description": "Dynamic abstract 3D geometry with neon lights. Blend this under the React Three Fiber canvas with low opacity (30%) for depth."
+      },
+      {
+        "url": "https://images.unsplash.com/photo-1717231366472-78137f83129d",
+        "category": "about_or_testimonial",
+        "description": "Indonesian professional working on a laptop. Use in the About Us or Testimonials section to localize the agency's presence."
+      },
+      {
+        "url": "https://images.pexels.com/photos/4006123/pexels-photo-4006123.jpeg",
+        "category": "contact_or_footer",
+        "description": "Sleek dark workspace setup. Use as an atmospheric background for the final CTA or footer section."
+      }
+    ]
+  },
+  "instructions_to_main_agent": [
+    "Install 'framer-motion' for scroll reveals and card hover 3D tilt effects.",
+    "Install 'react-three-fiber' and '@react-three/drei' to implement the hero 3D visuals. Keep the scene performant.",
+    "Use 'lucide-react' for all icon needs.",
+    "Ensure the entire application uses the dark theme palette exactly as defined. AVOID any generic Tailwind blue, purple, or indigo defaults.",
+    "Shadcn components (Calendar, Forms, Dialogs) MUST be stripped of Vercel-style defaults and customized with the surface colors, 1px border (#fff/10), and #D1FF4D focus rings.",
+    "The application language MUST be entirely in Bahasa Indonesia as per user request.",
+    "CRITICAL: All interactive elements (buttons, inputs, time slots, calendar days) MUST include a specific data-testid attribute formatted as kebab-case-role (e.g., data-testid='time-slot-0900')."
+  ]
+}
