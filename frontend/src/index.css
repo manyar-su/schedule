@@ -1,0 +1,181 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html, body, #root {
+  background: #0A0A0A;
+  color: #FFFFFF;
+  font-family: 'Satoshi', 'DM Sans', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  min-height: 100%;
+}
+
+body {
+  overflow-x: hidden;
+}
+
+/* Custom selection */
+::selection {
+  background: #D1FF4D;
+  color: #0A0A0A;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: #0A0A0A; }
+::-webkit-scrollbar-thumb { background: #1f1f1f; border-radius: 6px; }
+::-webkit-scrollbar-thumb:hover { background: #2c2c2c; }
+
+/* Headings */
+.font-display { font-family: 'Clash Display', 'Space Grotesk', sans-serif; letter-spacing: -0.02em; }
+
+/* Grain overlay */
+.grain::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+  opacity: 0.06;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  mix-blend-mode: overlay;
+}
+
+/* Grid background */
+.bg-grid {
+  background-image:
+    linear-gradient(rgba(255,255,255,0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,0.04) 1px, transparent 1px);
+  background-size: 60px 60px;
+}
+
+/* Glow tag */
+.glow-dot {
+  box-shadow: 0 0 0 0 rgba(209,255,77,0.7);
+  animation: pulseDot 2.2s ease-out infinite;
+}
+@keyframes pulseDot {
+  0% { box-shadow: 0 0 0 0 rgba(209,255,77,0.7); }
+  70% { box-shadow: 0 0 0 10px rgba(209,255,77,0); }
+  100% { box-shadow: 0 0 0 0 rgba(209,255,77,0); }
+}
+
+/* Card hover beam */
+.card-beam {
+  position: relative;
+  overflow: hidden;
+}
+.card-beam::after {
+  content: "";
+  position: absolute;
+  top: 0; left: -120%;
+  width: 60%;
+  height: 100%;
+  background: linear-gradient(120deg, transparent, rgba(209,255,77,0.18), transparent);
+  transition: left 0.9s ease;
+  pointer-events: none;
+}
+.card-beam:hover::after { left: 130%; }
+
+/* Default shadcn variables for radix */
+:root {
+  --radius: 0.75rem;
+}
+
+/* Scroll marquee */
+.marquee-track {
+  display: flex;
+  width: max-content;
+  animation: scrollMarquee 38s linear infinite;
+}
+@keyframes scrollMarquee {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+
+/* Time slot chip */
+.slot-chip {
+  font-family: 'JetBrains Mono', monospace;
+  border: 1px solid rgba(255,255,255,0.12);
+  background: #121212;
+  color: #FFF;
+  border-radius: 12px;
+  padding: 12px 14px;
+  text-align: center;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  transition: transform 0.15s ease, background 0.2s ease, color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+  cursor: pointer;
+  position: relative;
+}
+.slot-chip:hover:not(.disabled):not(.selected) {
+  background: rgba(209,255,77,0.08);
+  border-color: rgba(209,255,77,0.5);
+  color: #D1FF4D;
+  transform: translateY(-2px);
+}
+.slot-chip.selected {
+  background: #D1FF4D;
+  color: #0A0A0A;
+  border-color: #D1FF4D;
+  box-shadow: 0 0 24px rgba(209,255,77,0.45);
+}
+.slot-chip.disabled {
+  opacity: 0.32;
+  text-decoration: line-through;
+  cursor: not-allowed;
+}
+
+/* Calendar day */
+.cal-day {
+  width: 40px;
+  height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+  color: #FFF;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.85rem;
+  border: 1px solid transparent;
+  transition: all 0.15s ease;
+  cursor: pointer;
+}
+.cal-day:hover:not(.cal-disabled):not(.cal-selected) {
+  border-color: rgba(209,255,77,0.4);
+  color: #D1FF4D;
+}
+.cal-day.cal-selected {
+  background: #D1FF4D;
+  color: #0A0A0A;
+  font-weight: 700;
+  box-shadow: 0 0 20px rgba(209,255,77,0.55);
+}
+.cal-day.cal-disabled {
+  opacity: 0.25;
+  cursor: not-allowed;
+}
+.cal-day.cal-other-month { color: #555; }
+
+/* Input common */
+.input-base {
+  background: #1A1A1A;
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 12px;
+  padding: 12px 14px;
+  color: #FFF;
+  font-family: inherit;
+  width: 100%;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.input-base:focus {
+  outline: none;
+  border-color: #D1FF4D;
+  box-shadow: 0 0 0 3px rgba(209,255,77,0.18);
+}
+.input-base::placeholder { color: #5a5a5a; }

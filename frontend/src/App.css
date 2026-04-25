@@ -1,0 +1,2 @@
+/* Page-specific tweaks (kept tiny). Most styling is in index.css + Tailwind. */
+.app-shell { position: relative; min-height: 100vh; }
