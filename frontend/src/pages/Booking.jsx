@@ -1,13 +1,14 @@
 import React, { useEffect, useState, useMemo } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { motion } from "framer-motion";
-import { ArrowLeft, Check, CalendarCheck, ShoppingCart, Globe, Smartphone, Lightbulb } from "lucide-react";
+import { ArrowLeft, Check, CalendarCheck, ShoppingCart, Globe, Smartphone, Lightbulb, CalendarPlus, CreditCard } from "lucide-react";
 import Navbar from "../components/Navbar";
 import Footer from "../components/Footer";
 import Calendar from "../components/Calendar";
 import TimeSlots from "../components/TimeSlots";
 import { api, formatApiErrorDetail, formatIDR, fmtDateID } from "../lib/api";
 import { useToast } from "../components/ui/Toaster";
+import { loadMidtransSnap, buildGoogleCalendarUrl } from "../lib/midtrans";
 
 const ICONS = { ShoppingCart, Globe, Smartphone, Lightbulb };
 
@@ -70,43 +71,150 @@ export default function Booking() {
         date: toDateKey(selectedDate),
         time,
       });
-      setSuccess(data);
-      toast({ title: "Booking berhasil", description: "Cek email Anda untuk konfirmasi.", variant: "success" });
+
+      // Booking created — open Midtrans Snap
+      if (!data.snap_token) {
+        toast({ title: "Pembayaran tidak siap", description: "Coba lagi sebentar lagi.", variant: "destructive" });
+        setSubmitting(false);
+        return;
+      }
+
+      try {
+        const snap = await loadMidtransSnap({
+          clientKey: data.midtrans_client_key,
+          isProduction: !!data.midtrans_is_production,
+        });
+
+        snap.pay(data.snap_token, {
+          onSuccess: async (result) => {
+            toast({ title: "Pembayaran sukses!", description: "Mengkonfirmasi booking…", variant: "success" });
+            await pollBookingStatus(data.id);
+          },
+          onPending: async (result) => {
+            toast({ title: "Menunggu pembayaran", description: "Selesaikan pembayaran dengan instruksi yang diberikan." });
+            await pollBookingStatus(data.id);
+          },
+          onError: (result) => {
+            toast({ title: "Pembayaran gagal", description: "Silakan coba lagi.", variant: "destructive" });
+            setSubmitting(false);
+          },
+          onClose: async () => {
+            // user closed the popup — fetch latest status
+            const latest = await fetchBookingFresh(data.id);
+            if (latest && latest.payment_status === "paid") {
+              setSuccess(latest);
+            } else {
+              toast({ title: "Pembayaran belum selesai", description: "Slot Anda akan kami simpan selama 30 menit." });
+              setSubmitting(false);
+            }
+          },
+        });
+      } catch (snapErr) {
+        toast({ title: "Gagal memuat pembayaran", description: snapErr.message, variant: "destructive" });
+        setSubmitting(false);
+      }
     } catch (err) {
       toast({ title: "Booking gagal", description: formatApiErrorDetail(err.response?.data?.detail), variant: "destructive" });
-    } finally {
       setSubmitting(false);
     }
   };
 
+  const fetchBookingFresh = async (id) => {
+    try {
+      const r = await api.get(`/api/bookings/${id}`);
+      return r.data;
+    } catch {
+      return null;
+    }
+  };
+
+  const pollBookingStatus = async (id) => {
+    // Poll up to ~12s for webhook to land
+    for (let i = 0; i < 8; i++) {
+      const b = await fetchBookingFresh(id);
+      if (b && b.payment_status === "paid") {
+        setSuccess(b);
+        return;
+      }
+      await new Promise((r) => setTimeout(r, 1500));
+    }
+    // Fallback: still show success card with current state (pending) so user has a record
+    const fallback = await fetchBookingFresh(id);
+    if (fallback) setSuccess(fallback);
+    else setSubmitting(false);
+  };
+
   if (success) {
     const Icon = ICONS[activeService?.icon] || CalendarCheck;
+    const isPaid = success.payment_status === "paid";
+
+    // Build Google Calendar URL using booking date+time and service duration
+    const buildCalUrl = () => {
+      const [hh, mm] = (success.time || "09:00").split(":").map((x) => parseInt(x, 10));
+      // Treat date+time as Asia/Jakarta (UTC+7) — convert to UTC for Google Calendar
+      const localStart = new Date(`${success.date}T${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}:00+07:00`);
+      const durMin = activeService?.duration_minutes || 60;
+      const localEnd = new Date(localStart.getTime() + durMin * 60_000);
+      return buildGoogleCalendarUrl({
+        title: `${success.service_name} — InScale Digital`,
+        description: `Booking ID: ${success.id}\nLayanan: ${success.service_name}\nNama: ${success.name}\nCatatan: ${success.notes || "-"}\n\nKami akan mengirim link Zoom melalui email konfirmasi.`,
+        location: "Online via Zoom",
+        startDate: localStart,
+        endDate: localEnd,
+      });
+    };
+
     return (
       <>
         <Navbar />
-        <section className="min-h-screen pt-32 px-4 md:px-8 bg-grid">
-          <div className="max-w-3xl mx-auto rounded-2xl border border-accent/30 bg-[#121212] p-8 md:p-12 text-center" data-testid="booking-success">
-            <div className="w-16 h-16 rounded-2xl bg-accent text-bg flex items-center justify-center mx-auto mb-6 shadow-glow">
-              <Check size={28} strokeWidth={3} />
+        <section className="min-h-screen pt-32 px-4 md:px-8 bg-grid pb-16">
+          <div className={`max-w-3xl mx-auto rounded-2xl border ${isPaid ? "border-accent/30" : "border-warn/30"} bg-[#121212] p-8 md:p-12 text-center`} data-testid="booking-success">
+            <div
+              className={`w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-6 ${
+                isPaid ? "bg-accent text-bg shadow-glow" : "bg-warn/20 text-warn border border-warn/40"
+              }`}
+            >
+              {isPaid ? <Check size={28} strokeWidth={3} /> : <CreditCard size={26} strokeWidth={2.5} />}
             </div>
-            <h1 className="font-display font-bold text-3xl md:text-4xl mb-3">Jadwal Anda terkunci!</h1>
-            <p className="text-textS mb-8">
-              Tim kami akan mengirim email konfirmasi ke <span className="text-white font-semibold">{success.email}</span> dalam &lt; 24 jam.
+            <h1 className="font-display font-bold text-3xl md:text-4xl mb-3">
+              {isPaid ? "Pembayaran terkonfirmasi!" : "Slot Anda terkunci 30 menit"}
+            </h1>
+            <p className="text-textS mb-8 max-w-xl mx-auto">
+              {isPaid ? (
+                <>Email konfirmasi & link Zoom dikirim ke <span className="text-white font-semibold">{success.email}</span> dalam &lt; 24 jam.</>
+              ) : (
+                <>Selesaikan pembayaran sebelum slot dilepas. Setelah berhasil bayar, status booking otomatis berubah ke "terkonfirmasi".</>
+              )}
             </p>
+
             <div className="grid sm:grid-cols-2 gap-3 text-left mb-8">
               <Detail label="Layanan" value={success.service_name} icon={Icon} />
               <Detail label="ID Booking" value={success.id.slice(0, 8).toUpperCase()} mono />
               <Detail label="Tanggal" value={fmtDateID(success.date)} />
               <Detail label="Waktu" value={success.time + " WIB"} mono />
+              <Detail label="Status" value={success.status === "confirmed" ? "Terkonfirmasi" : "Menunggu"} />
+              <Detail label="Pembayaran" value={isPaid ? "Lunas" : "Pending"} mono />
             </div>
-            <div className="flex flex-col sm:flex-row gap-3 justify-center">
-              <Link to="/" className="px-5 py-3 rounded-xl border border-white/15 hover:border-white/40 font-semibold" data-testid="success-home">
+
+            <div className="flex flex-col sm:flex-row gap-3 justify-center flex-wrap">
+              {isPaid && (
+                <a
+                  href={buildCalUrl()}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center justify-center gap-2 bg-accent hover:bg-accentHover text-bg font-bold px-5 py-3 rounded-xl transition-transform hover:scale-[1.02] active:scale-95 shadow-glow"
+                  data-testid="success-add-gcal"
+                >
+                  <CalendarPlus size={16} strokeWidth={2.5} /> Tambahkan ke Google Calendar
+                </a>
+              )}
+              <Link to="/" className="px-5 py-3 rounded-xl border border-white/15 hover:border-white/40 font-semibold inline-flex items-center justify-center" data-testid="success-home">
                 ← Kembali ke Beranda
               </Link>
               <button
                 type="button"
-                onClick={() => { setSuccess(null); setSelectedDate(null); setTime(""); setForm({name:"",email:"",phone:"",notes:""}); }}
-                className="px-5 py-3 rounded-xl bg-accent hover:bg-accentHover text-bg font-bold"
+                onClick={() => { setSuccess(null); setSelectedDate(null); setTime(""); setForm({name:"",email:"",phone:"",notes:""}); setSubmitting(false); }}
+                className="px-5 py-3 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 font-semibold"
                 data-testid="success-book-another"
               >
                 Booking Lagi
@@ -263,8 +371,8 @@ export default function Booking() {
                 className="w-full inline-flex items-center justify-center gap-2 bg-accent hover:bg-accentHover disabled:bg-white/10 disabled:text-textS disabled:cursor-not-allowed text-bg font-bold px-6 py-4 rounded-xl text-base transition-transform hover:scale-[1.01] active:scale-95"
                 data-testid="booking-submit-button"
               >
-                <CalendarCheck size={18} strokeWidth={2.5} />
-                {submitting ? "Menyimpan…" : "Konfirmasi Jadwal"}
+                <CreditCard size={18} strokeWidth={2.5} />
+                {submitting ? "Memproses…" : "Lanjut ke Pembayaran"}
               </button>
 
               {!validForm && (
@@ -272,6 +380,9 @@ export default function Booking() {
                   Lengkapi: layanan, tanggal, waktu, nama, email & WhatsApp.
                 </p>
               )}
+              <p className="text-[11px] font-mono uppercase tracking-[0.18em] text-textS text-center pt-1">
+                Pembayaran aman via Midtrans · QRIS · GoPay · BCA VA · Kartu Kredit
+              </p>
             </form>
           </div>
         </div>

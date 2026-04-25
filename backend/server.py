@@ -1,6 +1,6 @@
 """
 InScale Digital - Booking Schedule API
-FastAPI + MongoDB + JWT cookie auth
+FastAPI + MongoDB + JWT cookie auth + Midtrans Snap + Mock email
 """
 from dotenv import load_dotenv
 load_dotenv()
@@ -10,6 +10,9 @@ import re
 import uuid
 import bcrypt
 import jwt
+import hashlib
+import logging
+import midtransclient
 from datetime import datetime, timezone, timedelta, date as date_type
 from typing import List, Optional
 from contextlib import asynccontextmanager
@@ -19,11 +22,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, EmailStr, Field
 from motor.motor_asyncio import AsyncIOMotorClient
 
+logger = logging.getLogger("inscale")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+
 # ---------- Constants ----------
 JWT_ALGORITHM = "HS256"
 ACCESS_TOKEN_MIN = 60 * 12  # 12 hours
 REFRESH_TOKEN_DAYS = 7
 SLOT_HOURS = ["09:00", "10:00", "11:00", "13:00", "14:00", "15:00", "16:00", "19:00", "20:00"]
+PENDING_PAYMENT_TTL_MIN = 30  # unpaid bookings auto-expire after 30 min
 
 
 def get_jwt_secret() -> str:
@@ -82,6 +89,56 @@ def clear_auth_cookies(response: Response):
 # ---------- DB ----------
 mongo_client: Optional[AsyncIOMotorClient] = None
 db = None
+
+# ---------- Midtrans Snap client ----------
+def _get_midtrans_snap():
+    is_production = os.environ.get("MIDTRANS_PRODUCTION", "false").lower() == "true"
+    return midtransclient.Snap(
+        is_production=is_production,
+        server_key=os.environ["MIDTRANS_SERVER_KEY"],
+        client_key=os.environ["MIDTRANS_CLIENT_KEY"],
+    )
+
+
+def _midtrans_verify_signature(order_id: str, status_code: str, gross_amount: str, signature_key: str) -> bool:
+    payload = f"{order_id}{status_code}{gross_amount}{os.environ['MIDTRANS_SERVER_KEY']}"
+    digest = hashlib.sha512(payload.encode("utf-8")).hexdigest()
+    return digest == (signature_key or "")
+
+
+# ---------- Mock Email Service ----------
+async def send_booking_email(booking: dict, kind: str = "confirmation"):
+    """
+    MOCKED email — logs to console + persists to db.email_logs.
+    Swap this with Resend SDK once user provides API key.
+    """
+    subject_map = {
+        "created": "Booking Anda diterima — menunggu pembayaran",
+        "confirmation": "Pembayaran terkonfirmasi — sampai jumpa di sesi Anda",
+        "cancelled": "Booking Anda dibatalkan",
+    }
+    subject = subject_map.get(kind, "Update booking")
+
+    log_doc = {
+        "id": str(uuid.uuid4()),
+        "to": booking.get("email"),
+        "kind": kind,
+        "subject": subject,
+        "booking_id": booking.get("id"),
+        "service_name": booking.get("service_name"),
+        "date": booking.get("date"),
+        "time": booking.get("time"),
+        "provider": "MOCK",
+        "sent_at": datetime.now(timezone.utc).isoformat(),
+    }
+    try:
+        await db.email_logs.insert_one({**log_doc})
+    except Exception as e:
+        logger.warning("email_logs insert failed: %s", e)
+    logger.info(
+        "[MOCK EMAIL] -> to=%s kind=%s subject='%s' booking=%s",
+        booking.get("email"), kind, subject, booking.get("id"),
+    )
 
 
 async def get_current_user(request: Request) -> dict:
@@ -159,7 +216,12 @@ class BookingResponse(BaseModel):
     time: str
     notes: str
     status: str
+    payment_status: str = "pending"
     created_at: str
+    snap_token: Optional[str] = None
+    midtrans_client_key: Optional[str] = None
+    midtrans_is_production: Optional[bool] = None
+    expires_at: Optional[str] = None
 
 
 class BookingStatusUpdate(BaseModel):
@@ -258,6 +320,8 @@ async def lifespan(app: FastAPI):
     await db.users.create_index("id", unique=True)
     await db.bookings.create_index("id", unique=True)
     await db.bookings.create_index([("date", 1), ("time", 1)])
+    # TTL index on expires_at — Mongo deletes pending unpaid bookings after expiry
+    await db.bookings.create_index("expires_at", expireAfterSeconds=0)
     await db.services.create_index("slug", unique=True)
     await db.login_attempts.create_index("identifier")
 
@@ -462,7 +526,7 @@ async def create_booking(payload: BookingCreate):
     if not svc:
         raise HTTPException(status_code=404, detail="Layanan tidak ditemukan")
 
-    # check slot still free
+    # check slot still free (any active pending/confirmed counts)
     existing = await db.bookings.find_one({
         "date": payload.date, "time": payload.time,
         "status": {"$in": ["pending", "confirmed"]}
@@ -471,6 +535,9 @@ async def create_booking(payload: BookingCreate):
         raise HTTPException(status_code=409, detail="Slot ini sudah dibooking")
 
     booking_id = str(uuid.uuid4())
+    now = datetime.now(timezone.utc)
+    expires_at = now + timedelta(minutes=PENDING_PAYMENT_TTL_MIN)
+
     doc = {
         "id": booking_id,
         "service_slug": payload.service_slug,
@@ -482,21 +549,178 @@ async def create_booking(payload: BookingCreate):
         "time": payload.time,
         "notes": (payload.notes or "").strip(),
         "status": "pending",
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "payment_status": "pending",
+        "amount_idr": int(svc["price_idr"]),
+        "created_at": now.isoformat(),
+        "expires_at": expires_at,  # MongoDB TTL — auto-delete unpaid bookings
+        "snap_token": None,
+        "midtrans_transaction_id": None,
     }
     await db.bookings.insert_one(doc)
-    return {k: v for k, v in doc.items() if k != "_id"}
+
+    # Create Midtrans Snap transaction
+    snap_token = None
+    midtrans_error = None
+    try:
+        snap = _get_midtrans_snap()
+        tx_payload = {
+            "transaction_details": {"order_id": booking_id, "gross_amount": int(svc["price_idr"])},
+            "customer_details": {
+                "first_name": payload.name.strip(),
+                "email": payload.email.lower().strip(),
+                "phone": payload.phone.strip(),
+            },
+            "item_details": [{
+                "id": svc["slug"],
+                "price": int(svc["price_idr"]),
+                "quantity": 1,
+                "name": svc["name"][:50],
+            }],
+            "enabled_payments": [
+                "qris", "gopay", "shopeepay", "bca_va", "bni_va", "bri_va",
+                "permata_va", "other_va", "credit_card", "indomaret", "alfamart",
+            ],
+            "expiry": {"unit": "minutes", "duration": PENDING_PAYMENT_TTL_MIN},
+        }
+        result = snap.create_transaction(tx_payload)
+        snap_token = result.get("token")
+        await db.bookings.update_one(
+            {"id": booking_id},
+            {"$set": {"snap_token": snap_token, "midtrans_redirect_url": result.get("redirect_url")}},
+        )
+    except Exception as e:
+        midtrans_error = str(e)
+        logger.error("Midtrans create_transaction failed for %s: %s", booking_id, e)
+        # Cleanup the held slot — the user won't be able to pay
+        await db.bookings.delete_one({"id": booking_id})
+        raise HTTPException(status_code=502, detail=f"Gagal terhubung ke Midtrans: {midtrans_error}")
+
+    # MOCK email: booking received (awaiting payment)
+    await send_booking_email(doc, kind="created")
+
+    is_production = os.environ.get("MIDTRANS_PRODUCTION", "false").lower() == "true"
+
+    return {
+        "id": booking_id,
+        "service_slug": doc["service_slug"],
+        "service_name": doc["service_name"],
+        "name": doc["name"],
+        "email": doc["email"],
+        "phone": doc["phone"],
+        "date": doc["date"],
+        "time": doc["time"],
+        "notes": doc["notes"],
+        "status": doc["status"],
+        "payment_status": doc["payment_status"],
+        "created_at": doc["created_at"],
+        "snap_token": snap_token,
+        "midtrans_client_key": os.environ["MIDTRANS_CLIENT_KEY"],
+        "midtrans_is_production": is_production,
+        "expires_at": expires_at.isoformat(),
+    }
+
+
+@api.get("/bookings/{booking_id}")
+async def get_booking_public(booking_id: str):
+    """Public endpoint to poll booking status after Midtrans payment."""
+    b = await db.bookings.find_one({"id": booking_id}, {"_id": 0, "midtrans_transaction_id": 0, "snap_token": 0})
+    if not b:
+        raise HTTPException(status_code=404, detail="Booking tidak ditemukan")
+    # serialize datetime
+    if isinstance(b.get("expires_at"), datetime):
+        b["expires_at"] = b["expires_at"].isoformat()
+    return b
+
+
+# ---------- Midtrans Webhook ----------
+class MidtransNotification(BaseModel):
+    order_id: str
+    status_code: str
+    gross_amount: str
+    signature_key: str
+    transaction_status: str
+    transaction_id: Optional[str] = None
+    fraud_status: Optional[str] = None
+    payment_type: Optional[str] = None
+
+
+@api.post("/payment/notification")
+async def midtrans_notification(request: Request):
+    body = await request.json()
+    order_id = body.get("order_id", "")
+    status_code = body.get("status_code", "")
+    gross_amount = body.get("gross_amount", "")
+    signature_key = body.get("signature_key", "")
+    transaction_status = body.get("transaction_status", "")
+    fraud_status = body.get("fraud_status", "")
+    transaction_id = body.get("transaction_id")
+    payment_type = body.get("payment_type")
+
+    logger.info("[Midtrans webhook] order=%s status=%s tx=%s pay=%s", order_id, transaction_status, transaction_id, payment_type)
+
+    if not _midtrans_verify_signature(order_id, status_code, gross_amount, signature_key):
+        logger.warning("[Midtrans webhook] BAD signature for order=%s", order_id)
+        raise HTTPException(status_code=403, detail="Invalid signature")
+
+    booking = await db.bookings.find_one({"id": order_id})
+    if not booking:
+        logger.warning("[Midtrans webhook] booking not found: %s", order_id)
+        return {"ok": True}
+
+    # Idempotent: if already paid, ignore
+    if booking.get("payment_status") == "paid" and transaction_status in ("settlement", "capture"):
+        return {"ok": True, "note": "already-paid"}
+
+    # Map Midtrans status -> our payment_status / status
+    update = {
+        "midtrans_transaction_id": transaction_id,
+        "midtrans_payment_type": payment_type,
+        "midtrans_last_status": transaction_status,
+    }
+    new_status = booking.get("status")
+    new_payment_status = booking.get("payment_status")
+
+    if transaction_status in ("settlement",) or (transaction_status == "capture" and (fraud_status in ("accept", None))):
+        new_payment_status = "paid"
+        new_status = "confirmed"
+        update["paid_at"] = datetime.now(timezone.utc).isoformat()
+        # Unset TTL so this slot is no longer auto-expired
+        await db.bookings.update_one({"id": order_id}, {"$unset": {"expires_at": ""}})
+    elif transaction_status == "pending":
+        new_payment_status = "pending"
+    elif transaction_status in ("deny", "cancel", "expire", "failure"):
+        new_payment_status = "failed"
+        new_status = "cancelled"
+
+    update["status"] = new_status
+    update["payment_status"] = new_payment_status
+    await db.bookings.update_one({"id": order_id}, {"$set": update})
+
+    # Trigger MOCK email on terminal states
+    fresh = await db.bookings.find_one({"id": order_id}, {"_id": 0})
+    if new_payment_status == "paid":
+        await send_booking_email(fresh, kind="confirmation")
+    elif new_payment_status == "failed":
+        await send_booking_email(fresh, kind="cancelled")
+
+    return {"ok": True}
 
 
 # ---------- Admin ----------
-@api.get("/admin/bookings", response_model=List[BookingResponse])
+@api.get("/admin/bookings")
 async def admin_list_bookings(_user: dict = Depends(require_admin)):
-    cursor = db.bookings.find({}, {"_id": 0}).sort([("date", -1), ("time", -1)])
+    cursor = db.bookings.find(
+        {},
+        {"_id": 0, "snap_token": 0, "midtrans_transaction_id": 0, "midtrans_redirect_url": 0}
+    ).sort([("date", -1), ("time", -1)])
     items = await cursor.to_list(length=500)
+    for it in items:
+        if isinstance(it.get("expires_at"), datetime):
+            it["expires_at"] = it["expires_at"].isoformat()
     return items
 
 
-@api.patch("/admin/bookings/{booking_id}", response_model=BookingResponse)
+@api.patch("/admin/bookings/{booking_id}")
 async def admin_update_booking(
     booking_id: str,
     payload: BookingStatusUpdate,
@@ -504,14 +728,21 @@ async def admin_update_booking(
 ):
     if payload.status not in ["pending", "confirmed", "cancelled", "completed"]:
         raise HTTPException(status_code=400, detail="Status tidak valid")
+    update = {"status": payload.status}
+    # On confirm/complete via admin: unset TTL (don't auto-expire), and clear payment "pending"
+    unset = {}
+    if payload.status in ("confirmed", "completed"):
+        unset["expires_at"] = ""
     result = await db.bookings.find_one_and_update(
         {"id": booking_id},
-        {"$set": {"status": payload.status}},
+        {"$set": update, **({"$unset": unset} if unset else {})},
         return_document=True,
-        projection={"_id": 0},
+        projection={"_id": 0, "snap_token": 0, "midtrans_transaction_id": 0, "midtrans_redirect_url": 0},
     )
     if not result:
         raise HTTPException(status_code=404, detail="Booking tidak ditemukan")
+    if isinstance(result.get("expires_at"), datetime):
+        result["expires_at"] = result["expires_at"].isoformat()
     return result
 
 
@@ -529,30 +760,25 @@ async def admin_stats(_user: dict = Depends(require_admin)):
     pending = await db.bookings.count_documents({"status": "pending"})
     confirmed = await db.bookings.count_documents({"status": "confirmed"})
     cancelled = await db.bookings.count_documents({"status": "cancelled"})
+    paid = await db.bookings.count_documents({"payment_status": "paid"})
     today = datetime.now(timezone.utc).date().isoformat()
     today_count = await db.bookings.count_documents({"date": today})
 
-    # revenue (sum service prices for confirmed/completed)
+    # revenue = sum of amount_idr for paid bookings (fallback to service join for legacy)
     pipeline = [
-        {"$match": {"status": {"$in": ["confirmed", "completed"]}}},
-        {"$lookup": {
-            "from": "services",
-            "localField": "service_slug",
-            "foreignField": "slug",
-            "as": "svc",
-        }},
-        {"$unwind": "$svc"},
-        {"$group": {"_id": None, "total": {"$sum": "$svc.price_idr"}}},
+        {"$match": {"payment_status": "paid"}},
+        {"$group": {"_id": None, "total": {"$sum": "$amount_idr"}}},
     ]
     revenue = 0
     async for doc in db.bookings.aggregate(pipeline):
-        revenue = doc.get("total", 0)
+        revenue = doc.get("total", 0) or 0
 
     return {
         "total": total,
         "pending": pending,
         "confirmed": confirmed,
         "cancelled": cancelled,
+        "paid": paid,
         "today": today_count,
         "revenue_idr": revenue,
     }

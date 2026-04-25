@@ -27,6 +27,17 @@ function StatusBadge({ status }) {
   return <span className={`inline-flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-[0.18em] border rounded-full px-2 py-1 ${v.c}`}>{v.t}</span>;
 }
 
+function PaymentBadge({ status }) {
+  const map = {
+    paid: { c: "bg-accent/15 text-accent border-accent/30", t: "Lunas" },
+    pending: { c: "bg-warn/10 text-warn border-warn/30", t: "Pending" },
+    failed: { c: "bg-danger/10 text-[#FF8FA9] border-danger/30", t: "Gagal" },
+    refunded: { c: "bg-white/5 text-textS border-white/10", t: "Refund" },
+  };
+  const v = map[status] || map.pending;
+  return <span className={`inline-flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-[0.18em] border rounded-full px-2 py-1 ${v.c}`}>💳 {v.t}</span>;
+}
+
 export default function AdminDashboard() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
@@ -127,11 +138,12 @@ export default function AdminDashboard() {
         </div>
 
         {/* Stats */}
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-3 md:gap-4 mb-8" data-testid="admin-stats">
+        <div className="grid grid-cols-2 md:grid-cols-6 gap-3 md:gap-4 mb-8" data-testid="admin-stats">
           <StatCard label="Total" value={stats?.total ?? "—"} />
           <StatCard label="Hari Ini" value={stats?.today ?? "—"} accent />
           <StatCard label="Pending" value={stats?.pending ?? "—"} />
           <StatCard label="Dikonfirmasi" value={stats?.confirmed ?? "—"} />
+          <StatCard label="Lunas" value={stats?.paid ?? "—"} />
           <StatCard label="Pendapatan" value={stats ? formatIDR(stats.revenue_idr) : "—"} small />
         </div>
 
@@ -212,7 +224,12 @@ export default function AdminDashboard() {
                       <div className="font-medium">{fmtDateID(b.date)}</div>
                       <div className="text-xs text-textS font-mono mt-0.5">{b.time} WIB</div>
                     </td>
-                    <td className="px-5 py-4"><StatusBadge status={b.status} /></td>
+                    <td className="px-5 py-4">
+                      <div className="flex flex-col gap-1.5">
+                        <StatusBadge status={b.status} />
+                        <PaymentBadge status={b.payment_status || "pending"} />
+                      </div>
+                    </td>
                     <td className="px-5 py-4 text-right">
                       <div className="inline-flex items-center gap-1.5">
                         {b.status !== "confirmed" && (
