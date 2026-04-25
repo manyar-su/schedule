@@ -1,0 +1,53 @@
+{
+  "summary": "Frontend e2e testing for InScale Digital scheduling app. Verified landing page (hero, marquee, services, how-it-works, testimonials, FAQ, final CTA, footer), service-deep-link booking (/booking/website-development), full booking flow (calendar -> slot -> form -> submit -> success), admin login (right/wrong creds), admin dashboard (stats, filters, search, status update), logout & route protection, slot collision (409) and responsive layouts. All required data-testids present and functional.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Landing hero (mobile 390px)", "issues": ["Hero h1 wraps awkwardly on mobile: 'Jadwalkan jasa' / 'digital Anda —' / 'dalam satu klik' renders the em-dash on its own line ('Anda —' breaks). Cosmetic only — readable. Consider adjusting line-break tweak for <sm breakpoint."]}
+    ]
+  },
+  "tested_flows": [
+    "Landing renders with hero-title, hero-cta-primary->/booking, hero-cta-secondary, client-strip, all 4 service cards (service-book-{slug} for install-opencart-zoom, website-development, mobile-app-development, digital-consulting), how-step-1..4, testimoni-0..2, faq-item-0..3, final-cta",
+    "/booking/website-development preselects 'Pembuatan Website' in the Layanan input and summary",
+    "Calendar next-month navigation works; sundays/past dates disabled (cal-disabled / cal-other-month)",
+    "Selecting a future weekday triggers GET /api/availability and renders 9 enabled slot chips by default",
+    "After successful booking, the booked time slot is removed from subsequent availability fetch (verified 09:00 disappeared)",
+    "Booking POST creates record; success card shows id (8-char upper) and 'Jumat, 15 Mei 2026 / 09:00 WIB'; success toast 'Booking berhasil' shown",
+    "Slot collision via API returns 409 with detail 'Slot ini sudah dibooking' (matches frontend toast wiring)",
+    "/admin without auth redirects to /admin/login",
+    "Admin login: wrong password shows 'Email atau password salah' inline (data-testid='admin-login-error')",
+    "Admin login with admin@inscaledigital.id / AdminInscale#2026 redirects to /admin",
+    "Dashboard shows stats (total/today/pending/confirmed/revenue Rp), filter chips (filter-all/pending/confirmed/completed/cancelled), search input (admin-search), and table rows with action buttons (confirm/complete/pending/cancel/delete)",
+    "Status update: 'confirm-{id}' patch endpoint refreshes stats (Pending 3->2, Dikonfirmasi 0->1, Pendapatan 0->4.500.000)",
+    "Search 'TEST' filters table to 1 matching row",
+    "Logout (admin-logout) clears cookie and revisiting /admin redirects to /admin/login",
+    "Responsive: no horizontal scroll at 390px (mobile), 768px (tablet), 1440px (desktop) on landing & booking"
+  ],
+  "test_credentials": "Admin: admin@inscaledigital.id / AdminInscale#2026 (verified working)",
+  "seed_data_creation": "Created several TEST_ bookings during e2e: 'TEST User <ts>' (15 Mei 2026 09:00, website-development, confirmed), 'TEST C1' (10 Jun 2026 14:00, digital-consulting). Existing seeds Rina Wijaya and Andi Pratama present. Admin can clean these via delete action.",
+  "console_warnings": [
+    "WebSocket dev-server hot-reload tries ws://localhost:443/ws and fails (WDS_SOCKET_PORT=443 in /app/frontend/.env). Non-blocking for product but noisy in console; consider unsetting WDS_SOCKET_PORT for local preview or aligning with REACT_APP_BACKEND_URL host.",
+    "GET /api/auth/me returns 401 on public pages because AuthContext probes the session — expected; not user-visible."
+  ],
+  "critical_code_review_comments": [
+    "Hero3D Three.js Canvas loads a heavy WebGL scene on the public landing page; consider lazy-loading or fallback for low-power devices (currently ~1.5s extra TTI, GPU stall warnings observed in headless Chromium).",
+    "Booking.jsx: useEffect dep list disables eslint-react-hooks rule with // eslint-disable-line; activeSlug should be included via lazy initial state to be safe — minor.",
+    "WDS_SOCKET_PORT=443 in /app/frontend/.env causes constant ws connection-refused noise; not breaking but should be removed for non-Emergent local runs.",
+    "Slot-collision toast path is correctly wired (formatApiErrorDetail + toast variant=destructive) but practically unreachable from UI because availability filters out booked slots. This is fine, but a race condition (two tabs) would surface it — covered by backend 409.",
+    "All required data-testid attributes verified in source and at runtime (hero-cta-primary, nav-cta-book, service-book-{slug}, select-service-{slug}, calendar-prev/next, booking-submit-button, booking-success, admin-login-submit/error, admin-logout, admin-stats, filter-{status}, booking-row-{id}, confirm/complete/pending/cancel/delete-{id})."
+  ],
+  "test_report_links": ["/app/test_reports/iteration_2.json"],
+  "action_items": [
+    "(Optional, low priority) Tune mobile hero line-break in Landing.jsx so the em-dash doesn't dangle on its own line at <sm breakpoint.",
+    "(Optional, low priority) Consider removing WDS_SOCKET_PORT=443 from /app/frontend/.env for cleaner console.",
+    "(Optional) Lazy-mount Hero3D <Suspense> with a static poster fallback to improve mobile FCP."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (29/29 from iteration_1)", "frontend": "100% (all required flows pass)"},
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Test seeded admin user works: admin@inscaledigital.id / AdminInscale#2026. Cookie-based auth via AuthContext; /api/auth/me 401s for public pages (expected). When testing slot-collision via UI you cannot reproduce it because availability hides booked slots — use direct API POST against http://localhost:8001/api/bookings to verify 409 path. Booking page route /booking/:slug preselects service. All data-testids confirmed present.",
+  "rca_of_the_issue": "N/A — no functional bugs found."
+}
