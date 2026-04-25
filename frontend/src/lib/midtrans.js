@@ -18,9 +18,15 @@ export function loadMidtransSnap({ clientKey, isProduction }) {
     s.async = true;
     s.onload = () => {
       if (window.snap) resolve(window.snap);
-      else reject(new Error("snap.js loaded but window.snap missing"));
+      else {
+        _loaded = null;
+        reject(new Error("snap.js loaded but window.snap missing"));
+      }
     };
-    s.onerror = () => reject(new Error("Gagal memuat Midtrans Snap.js"));
+    s.onerror = () => {
+      _loaded = null;
+      reject(new Error("Gagal memuat Midtrans Snap.js"));
+    };
     document.head.appendChild(s);
   });
   return _loaded;
